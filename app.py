@@ -1,5 +1,5 @@
-from flask import Flask, jsonify, request
-import requests, json, os
+from flask import Flask, request
+import requests, ast, os
 from flask_cors import CORS
 from dotenv import load_dotenv
 
@@ -30,44 +30,99 @@ def index():
 def post_questionario():
     global aluno
 
-    # Recebendo dados
+    # Recebendo os dados da requisição
     data = request.json
     res = data.get('respostas', [])
+    
+    # Instanciando o aluno com os dados fornecidos
     aluno = Aluno(res['name'], res['age'], res['interests'], res['ability'], res['currentAbilities'])
 
-    # Enviando requisição
-    aluno.gpt['introdução'] = f'Imagine que você é um professor de inglês e escreverá uma questão para um alunx que se chama {aluno.nome}, de {aluno.idade} anos, que se interessa por {aluno.interesses}, deseja focar em aprender {aluno.habilidade} e já domina {aluno.habilidades_atuais}.'
-    prompt = 'Com base nesse aluno, escreva uma história em inglês referente ao perfil do usuário para ensino de inglês e formule uma questão sobre esse texto de forma que o aluno possa responder com suas palavras. O formato da resposta deve ser um json com os campos: "titleText", "text", and "question" (o conteúdo é apenas um exemplo):\
-          {\
-            "titleText": "Exploring the World Through Travel and Conversation.",\
-            "text": "Traveling is one of the most enriching experiences you can have. At 25, you’ve likely already seen a few places, but the world is vast and full of wonders waiting to be explored...",\
-            "question": "Why is enhancing conversation skills important for someone who enjoys traveling?"\
-          }'
+    # Criando o prompt a ser enviado para o GPT
+    aluno.gpt['introdução'] = f'Imagine que você é um professor de inglês e escreverá uma questão para um alunx que se chama {aluno.nome}, de {aluno.idade} anos, que se interessa por {aluno.interesses}, deseja focar em aprender {aluno.habilidade} e já domina {aluno.habilidades_atuais}. '
+    
+    prompt = '''Com base nesse aluno, escreva uma história em inglês referente ao perfil do usuário para ensino de inglês e formule uma questão sobre esse texto de forma que o aluno possa responder com suas palavras. a saída deve ser analisável com ast.literal_eval() do Python e nada mais, com os campos: "titleText", "text", and "question" (o conteúdo é apenas um exemplo):
+    {
+        "titleText": "Exploring the World Through Travel and Conversation.",
+        "text": "Traveling is one of the most enriching experiences you can have. At 25, you’ve likely already seen a few places, but the world is vast and full of wonders waiting to be explored...",
+        "question": "Why is enhancing conversation skills important for someone who enjoys traveling?"
+    }'''
+    
+    # Concatenando o conteúdo do prompt
     content = aluno.gpt['introdução'] + prompt
-
+    
+    # Enviando a requisição para o GPT
     response = gpt_request(content)
+    
+    # Limpando a resposta recebida para remover blocos de código ou caracteres indesejados
     texto_recebido = response.replace('```json', '').replace('```', '').strip()
-    texto_recebido_tratado = texto_recebido.replace("\n", "").replace("  ", " ")
 
-    print(texto_recebido_tratado)
-    return texto_recebido_tratado
+    # Remover o prefixo "python" caso exista
+    if texto_recebido.startswith("python"):
+        texto_recebido = texto_recebido.replace("python", "").strip()
+    
+    # Removendo quebras de linha e espaços extras
+    texto_recebido_tratado = texto_recebido.replace("\n", "").replace("  ", " ")
+    
+    # Tentando converter o texto recebido em um dicionário Python
+    try:
+        resposta_em_json = ast.literal_eval(texto_recebido_tratado)
+        print("Resposta convertida em JSON:", resposta_em_json)
+    except (SyntaxError, ValueError) as e:
+        # Em caso de erro, exibe o erro e o conteúdo original tratado
+        print(f"Erro ao converter resposta para JSON: {e}")
+        print("Texto não formatado corretamente:", texto_recebido_tratado)
+        return {"error": "Formato da resposta inválido", "conteudo_original": texto_recebido_tratado}, 400
+    
+    # Retornando o JSON corretamente convertido
+    return resposta_em_json
 
 @app.route('/enviar-resposta', methods=['POST'])
 def post_resposta():
+        # Recebendo os dados da requisição
     data = request.json
     res = data.get('response', [])
-
+    
     aluno.gpt['resposta'] = res
-    prompt = f''' Imagine que você é um professor de inglês e analise o texto a seguir e a resposta do aluno para este texto. Após isso, informe um feedback com base no objetivo do aluno, {aluno.habilidade}, em formato de texto contendo a porcentagem de acertos e os pontos onde esse aluno poderia melhorar. Essa resposta deve estar contida em 'return'. Além disso, com base nesse aluno, escreva uma história em inglês, referente ao perfil do usuário e resposta da pergunta anterior, para ensino de inglês e formule uma questão sobre esse texto de forma que o aluno possa responder com suas palavras. O formato da resposta deve ser um json com os campos: "titleText", "text", "question" and "return". Texto:'''
 
-    content = aluno.gpt['introdução'] + prompt + aluno.gpt['exercício'] + ' Resposta do usuário: ' + aluno.gpt['resposta']
+    # Criando o prompt para o GPT
+    prompt = '''Em formato de texto contendo a porcentagem de acertos e os pontos onde esse aluno poderia melhorar. a saída deve ser analisável com ast.literal_eval() do Python e nada mais, com os campos: "titleText", "text", "question" (próxima questão), "return" (resultado). Assim como no *exemplo* abaixo:
+    {
+        "titleText": "Milton's Football Journey",
+        "text": "Milton, a 25-year-old football enthusiast, had always loved the beautiful game. Every weekend, he would gather with friends at the local pub (...)",
+        "question": "What does football mean to you, and how does it impact your life today?",
+        "return": "80%\ correct Milton, your response about football emphasizes its enjoyable and active aspects, which is great! You correctly identified the sport's positive qualities."
+    }
+    A questão dada para o aluno foi: '''
 
+    # Montando o conteúdo para enviar à API
+    content = aluno.gpt['introdução'] + prompt + aluno.gpt['exercício'] + ' A resposta do aluno foi: ' + aluno.gpt['resposta']
+    
+    # Fazendo a requisição ao GPT (função gpt_request)
     response = gpt_request(content)
+    print("Resposta recebida do GPT:", response)
+    
+    # Remover blocos de código (ex: ```json) e fazer a limpeza básica
     texto_recebido = response.replace('```json', '').replace('```', '').strip()
-    texto_recebido_tratado = texto_recebido.replace("\n", "").replace("  ", " ")
 
-    print("enviar-resposta retorno:", texto_recebido_tratado)
-    return texto_recebido_tratado
+    # Remover o prefixo "python" caso exista
+    if texto_recebido.startswith("python"):
+        texto_recebido = texto_recebido.replace("python", "").strip()
+    
+    # Remover quebras de linha desnecessárias e espaços extras
+    texto_recebido_tratado = texto_recebido.replace("\n", "").replace("  ", " ")
+    
+    # Tentar converter a string em um dicionário usando ast.literal_eval
+    try:
+        resposta_em_json = ast.literal_eval(texto_recebido_tratado)
+        print("Resposta convertida em JSON:", resposta_em_json)
+    except (SyntaxError, ValueError) as e:
+        # Caso ocorra um erro de sintaxe ou valor, exibe o erro e o conteúdo original
+        print(f"Erro ao converter resposta para JSON: {e}")
+        print("Texto não formatado corretamente:", texto_recebido_tratado)
+        return {"error": "Formato da resposta inválido", "conteudo_original": texto_recebido_tratado}, 400
+
+    # Retornando o JSON tratado
+    return resposta_em_json
 
 def gpt_request(prompt: str):
     # Content
@@ -90,8 +145,7 @@ def gpt_request(prompt: str):
         "max_tokens": maxTokens,
     }
 
-    bodyMessage = json.dumps(body)
-    response = requests.post(link, headers=headers, data=bodyMessage)
+    response = requests.post(link, headers=headers, json=body)
 
     json_response = response.json()
 

@@ -19,6 +19,7 @@ class Aluno:
     self.gpt: dict = {
       'introdução': '',
       'exercício': '',
+      'imagem': '',
       'resposta': ''
     }
 
@@ -40,12 +41,16 @@ def post_questionario():
     # Criando o prompt a ser enviado para o GPT
     aluno.gpt['introdução'] = f'Imagine que você é um professor de inglês e escreverá uma questão para um alunx que se chama {aluno.nome}, de {aluno.idade} anos, que se interessa por {aluno.interesses}, deseja focar em aprender {aluno.habilidade} e já domina {aluno.habilidades_atuais}. '
     
-    prompt = '''Com base nesse aluno, escreva uma história em inglês referente ao perfil do usuário para ensino de inglês e formule uma questão sobre esse texto de forma que o aluno possa responder com suas palavras. a saída deve ser analisável com ast.literal_eval() do Python e nada mais, com os campos: "titleText", "text", and "question" (o conteúdo é apenas um exemplo):
-    {
-        "titleText": "Exploring the World Through Travel and Conversation.",
-        "text": "Traveling is one of the most enriching experiences you can have. At 25, you’ve likely already seen a few places, but the world is vast and full of wonders waiting to be explored...",
+    prompt = '''
+        Com base nas informações fornecidas sobre este aluno, crie uma história em inglês que reflita os interesses do aluno, a ser utilizada no ensino de inglês. A história deve ser envolvente e relevante para o contexto do aluno. Além disso, formule uma pergunta relacionada ao texto, de forma que o aluno possa respondê-la com suas próprias palavras. Certifique-se de que o conteúdo da história e da pergunta estejam diretamente relacionados aos interesses e ao contexto do aluno.
+        A saída deve ser um formato JSON válido, compatível com o método ast.literal_eval() do Python, contendo os seguintes campos: "titleText", "text", "image (um prompt de contexto que não viole nenhum safety system)", e "question". A estrutura JSON deve seguir o exemplo abaixo:
+        {
+        "titleText": "Exploring the World Through Travel and Conversation",
+        "text": "Traveling is one of the most enriching experiences. At 25, you’ve likely already seen a few places, but the world is vast and full of wonders waiting to be explored...",
+        "image": "A girl traveling the world, exploring different cultures and landscapes...",
         "question": "Why is enhancing conversation skills important for someone who enjoys traveling?"
-    }'''
+        }
+    '''
     
     # Concatenando o conteúdo do prompt
     content = aluno.gpt['introdução'] + prompt
@@ -66,6 +71,7 @@ def post_questionario():
     # Tentando converter o texto recebido em um dicionário Python
     try:
         resposta_em_json = ast.literal_eval(texto_recebido_tratado)
+        resposta_em_json['imageUrl'] = gpt_image_gpt(resposta_em_json['image'])
         print("Resposta convertida em JSON:", resposta_em_json)
     except (SyntaxError, ValueError) as e:
         # Em caso de erro, exibe o erro e o conteúdo original tratado
@@ -85,14 +91,19 @@ def post_resposta():
     aluno.gpt['resposta'] = res
 
     # Criando o prompt para o GPT
-    prompt = '''Em formato de texto contendo a porcentagem de acertos e os pontos onde esse aluno poderia melhorar. a saída deve ser analisável com ast.literal_eval() do Python e nada mais, com os campos: "titleText", "text", "question" (próxima questão), "return" (resultado). Assim como no *exemplo* abaixo:
-    {
-        "titleText": "Milton's Football Journey",
-        "text": "Milton, a 25-year-old football enthusiast, had always loved the beautiful game. Every weekend, he would gather with friends at the local pub (...)",
+    prompt = '''
+        Com base nas respostas do aluno, escreva um texto avaliando seu desempenho. O texto deve incluir uma porcentagem de acertos e sugerir pontos de melhoria. Além disso, gere uma nova pergunta relacionada ao tema para que o aluno possa responder em uma próxima atividade.
+
+        A saída deve estar em um formato JSON válido, compatível com o método ast.literal_eval() do Python, contendo os seguintes campos: "titleText", "text", "image (um prompt de contexto que não viole nenhum safety system)", "question" (próxima questão), e "return" (resultado da avaliação). A estrutura JSON deve seguir o exemplo abaixo:
+        {
+        "titleText": "Alex's Football Journey",
+        "text": "Alex, a 25-year-old football enthusiast, had always loved the beautiful game. Every weekend, he would gather with friends at the local pub, cheering for his favorite team...",
+        "image": "A young man watching a football match at a pub, surrounded by friends and cheering for his team.",
         "question": "What does football mean to you, and how does it impact your life today?",
-        "return": "80%\ correct Milton, your response about football emphasizes its enjoyable and active aspects, which is great! You correctly identified the sport's positive qualities."
-    }
-    A questão dada para o aluno foi: '''
+        "return": "80%\ correct, [aluno name]. Your response about football emphasizes its enjoyable and active aspects, which is great! You correctly identified the sport's positive qualities."
+        }
+        Por fim, a questão dada ao aluno foi:
+    '''
 
     # Montando o conteúdo para enviar à API
     content = aluno.gpt['introdução'] + prompt + aluno.gpt['exercício'] + ' A resposta do aluno foi: ' + aluno.gpt['resposta']
@@ -114,6 +125,7 @@ def post_resposta():
     # Tentar converter a string em um dicionário usando ast.literal_eval
     try:
         resposta_em_json = ast.literal_eval(texto_recebido_tratado)
+        resposta_em_json['imageUrl'] = gpt_image_gpt(resposta_em_json['image'])
         print("Resposta convertida em JSON:", resposta_em_json)
     except (SyntaxError, ValueError) as e:
         # Caso ocorra um erro de sintaxe ou valor, exibe o erro e o conteúdo original
@@ -128,7 +140,7 @@ def gpt_request(prompt: str):
     # Content
     link = "https://api.openai.com/v1/chat/completions"
     modelId = "gpt-4o-mini"
-    maxTokens = 220
+    maxTokens = 320
     messages= [
         {"role": "user", "content": prompt}
     ]
@@ -157,6 +169,30 @@ def gpt_request(prompt: str):
     else:
         print("A resposta não contém o formato esperado.")
         return None
+
+def gpt_image_gpt(prompt: str) -> str:
+    # Content
+    link = "https://api.openai.com/v1/images/generations"
+    TOKEN = openai_api_key
+
+    # Requisition
+    headers = {
+        "Authorization": f"Bearer {TOKEN}",
+        "Content-Type": "application/json" 
+    }
+
+    body = {
+        "prompt": prompt,
+        "n": 1,
+        "size": "1024x1024"
+    }
+
+    request = requests.post(link, headers=headers, json=body)
+
+    print('Image url:', request.json())
+    print('Image url:', request.json()['data'][0]['url'])
+    return request.json()['data'][0]['url']
+
 
 if __name__ == '__main__':
     app.run(debug=True)

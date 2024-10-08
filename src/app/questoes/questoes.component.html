@@ -7,6 +7,7 @@
     </div>
   <form (submit)="sendResponse($event)" class="formulario">
     <div class="m-3 mt-4">
+      <img [src]="data.imageUrl" alt="Ilustração" class="h-75">
       <div class="form-group mt-4 formulario">
         <label class="text-center" for="response">{{ data.question }}</label>
         <textarea name="response" id="response" class="form-control mt-2" rows="3"></textarea>
